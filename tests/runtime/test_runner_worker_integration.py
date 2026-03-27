@@ -375,9 +375,10 @@ async def test_runner_integration_times_out_before_slow_researcher_finishes(
 
     run_state = await store.get_run("run-timeout-int")
     assert run_state is not None
-    assert run_state.task_statuses["task-timeout-int:researcher"] is TaskStatus.RUNNING
+    assert run_state.task_statuses["task-timeout-int:researcher"] is TaskStatus.FAILED
     assert tuple(event.event_type for event in run_state.trace_events) == (
         "run.started",
         "worker.dispatched",
+        "worker.completed",
         "run.failed",
     )

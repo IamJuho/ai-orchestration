@@ -74,10 +74,12 @@ async def test_runner_timeout_persists_terminal_failure_state(
     run_state = await store.get_run("run-timeout")
     assert run_state is not None
     assert run_state.task_statuses["task-timeout"] is TaskStatus.FAILED
-    assert run_state.task_statuses["task-timeout:researcher"] is TaskStatus.RUNNING
+    assert run_state.task_statuses["task-timeout:researcher"] is TaskStatus.FAILED
     assert tuple(event.event_type for event in run_state.trace_events) == (
         "run.started",
         "worker.dispatched",
+        "worker.completed",
         "run.failed",
     )
+    assert run_state.trace_events[2].payload["failure_kind"] == "timeout"
     assert run_state.trace_events[-1].payload["failure_kind"] == "timeout"

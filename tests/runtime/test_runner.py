@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from ai_orchestration.agents.base import UnknownWorkerCapabilityError
 from ai_orchestration.contracts.coder import CoderArtifact, CoderRequest, CoderResponse
 from ai_orchestration.contracts.common import Failure, FailureKind, TaskStatus
 from ai_orchestration.contracts.researcher import (
@@ -179,3 +180,61 @@ async def test_runner_persists_failed_run_and_terminal_failure_trace(
     )
     assert run_state.trace_events[-1].payload["failure_kind"] == "validation"
     assert run_state.trace_events[-1].payload["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runner_classifies_registry_wiring_failure_as_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def stub_execute_orchestrator(**_: Any) -> Any:
+        raise UnknownWorkerCapabilityError(
+            capability="planner",
+            available_capabilities=("researcher", "coder", "reviewer"),
+        )
+
+    monkeypatch.setattr(
+        "ai_orchestration.runtime.runner.execute_orchestrator",
+        stub_execute_orchestrator,
+    )
+
+    store = InMemoryStateStore()
+    result = await run_orchestration(
+        "Ship runtime runner",
+        config=_settings(),
+        state_store=store,
+        task_id="task-config-failure",
+        run_id_factory=lambda: "run-config-failure",
+    )
+
+    assert result.status is TaskStatus.FAILED
+    assert result.failures[-1].kind is FailureKind.CONFIG
+
+    run_state = await store.get_run("run-config-failure")
+    assert run_state is not None
+    assert run_state.trace_events[-1].event_type == "run.failed"
+    assert run_state.trace_events[-1].payload["failure_kind"] == "config"
+
+
+@pytest.mark.asyncio
+async def test_runner_classifies_unexpected_runtime_exception_as_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def stub_execute_orchestrator(**_: Any) -> Any:
+        raise RuntimeError("runtime exploded")
+
+    monkeypatch.setattr(
+        "ai_orchestration.runtime.runner.execute_orchestrator",
+        stub_execute_orchestrator,
+    )
+
+    store = InMemoryStateStore()
+    result = await run_orchestration(
+        "Ship runtime runner",
+        config=_settings(),
+        state_store=store,
+        task_id="task-runtime-failure",
+        run_id_factory=lambda: "run-runtime-failure",
+    )
+
+    assert result.status is TaskStatus.FAILED
+    assert result.failures[-1].kind is FailureKind.WORKER
