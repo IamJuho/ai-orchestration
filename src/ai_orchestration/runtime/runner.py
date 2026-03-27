@@ -317,7 +317,6 @@ def _build_traced_capability_resolver(
             execute=execute_with_tracing,
             request_factory=original_capability.request_factory,
             fallback_retryable=original_capability.fallback_retryable,
-            terminal_on_success=original_capability.terminal_on_success,
             success_summary=original_capability.success_summary,
             failure_terminal_status=original_capability.failure_terminal_status,
             max_steps_summary=original_capability.max_steps_summary,
@@ -400,7 +399,7 @@ def _build_retry_notifier(
 def _failure_kind_for_exception(exc: Exception) -> FailureKind:
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
         return FailureKind.TIMEOUT
-    if isinstance(exc, (UnknownWorkerCapabilityError, LookupError)):
+    if isinstance(exc, UnknownWorkerCapabilityError):
         return FailureKind.CONFIG
     if isinstance(exc, (ValidationError, ValueError)):
         return FailureKind.VALIDATION

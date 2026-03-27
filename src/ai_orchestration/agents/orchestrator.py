@@ -133,6 +133,8 @@ def _retry_exhausted_response(
 def _handle_step_success(
     *,
     step: WorkerStep,
+    step_index: int,
+    steps: tuple[WorkerStep, ...],
     capability: WorkerCapability[Any, Any],
     request: OrchestratorRequest,
     state: OrchestratorState,
@@ -142,13 +144,13 @@ def _handle_step_success(
     state.context.artifacts.extend(artifacts)
     state.context.artifacts_by_worker[step.worker_name] = artifacts
 
-    if not capability.terminal_on_success:
+    if step_index != len(steps) - 1:
         return None
 
     return FinalResponse(
         run_id=request.envelope.run_id,
         status=TaskStatus.SUCCESS,
-        summary=capability.success_summary or f"Completed {step.worker_name} successfully.",
+        summary=capability.success_summary(tuple(item.worker_name for item in steps)),
         artifacts=state.context.artifacts,
         failures=state.context.failures,
     )
@@ -159,6 +161,8 @@ async def _execute_worker_step(
     deps: RuntimeDeps,
     request: OrchestratorRequest,
     step: WorkerStep,
+    step_index: int,
+    steps: tuple[WorkerStep, ...],
     state: OrchestratorState,
     retry_budget: int,
     max_steps: int,
@@ -184,6 +188,8 @@ async def _execute_worker_step(
         if response.status is TaskStatus.SUCCESS:
             return _handle_step_success(
                 step=step,
+                step_index=step_index,
+                steps=steps,
                 capability=capability,
                 request=request,
                 state=state,
@@ -233,12 +239,15 @@ async def execute_orchestrator(
     state = OrchestratorState(
         context=OrchestrationContext(artifacts=list(request.envelope.input_artifacts))
     )
+    steps = _v1_worker_steps()
 
-    for step in _v1_worker_steps():
+    for step_index, step in enumerate(steps):
         step_result = await _execute_worker_step(
             deps=deps,
             request=request,
             step=step,
+            step_index=step_index,
+            steps=steps,
             state=state,
             retry_budget=deps.config.retry_budget,
             max_steps=deps.config.max_steps,
