@@ -3,9 +3,13 @@ from __future__ import annotations
 from typing import Any, Literal, cast, overload
 
 from ai_orchestration.agents.base import UnknownWorkerCapabilityError, WorkerCapability
-from ai_orchestration.agents.coder import execute_coder
-from ai_orchestration.agents.researcher import execute_researcher
-from ai_orchestration.agents.reviewer import execute_reviewer
+from ai_orchestration.agents.coder import build_coder_request, execute_coder
+from ai_orchestration.agents.researcher import build_researcher_request, execute_researcher
+from ai_orchestration.agents.reviewer import (
+    build_reviewer_request,
+    execute_reviewer,
+    reviewer_terminal_status,
+)
 from ai_orchestration.contracts.coder import CoderRequest, CoderResponse
 from ai_orchestration.contracts.researcher import ResearcherRequest, ResearcherResponse
 from ai_orchestration.contracts.reviewer import ReviewerRequest, ReviewerResponse
@@ -18,18 +22,23 @@ _WORKER_CAPABILITIES: dict[CapabilityName, WorkerCapability[Any, Any]] = {
         request_model=ResearcherRequest,
         response_model=ResearcherResponse,
         execute=execute_researcher,
+        request_factory=build_researcher_request,
     ),
     "coder": WorkerCapability(
         name="coder",
         request_model=CoderRequest,
         response_model=CoderResponse,
         execute=execute_coder,
+        request_factory=build_coder_request,
     ),
     "reviewer": WorkerCapability(
         name="reviewer",
         request_model=ReviewerRequest,
         response_model=ReviewerResponse,
         execute=execute_reviewer,
+        request_factory=build_reviewer_request,
+        fallback_retryable=True,
+        failure_terminal_status=reviewer_terminal_status,
     ),
 }
 

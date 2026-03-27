@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Generic, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from ai_orchestration.contracts.common import Artifact, Failure, TaskStatus
+from ai_orchestration.contracts.orchestrator import OrchestratorRequest
 from ai_orchestration.deps import RuntimeDeps
 
 WorkerRequestT = TypeVar("WorkerRequestT", bound=BaseModel)
@@ -19,12 +22,28 @@ class WorkerExecutor(Protocol[WorkerRequestContraT, WorkerResponseCoT]):
     ) -> WorkerResponseCoT: ...
 
 
+@dataclass
+class OrchestrationContext:
+    artifacts: list[Artifact] = field(default_factory=list)
+    failures: list[Failure] = field(default_factory=list)
+    artifacts_by_worker: dict[str, list[Artifact]] = field(default_factory=dict)
+
+
+def default_failure_terminal_status(_: OrchestrationContext) -> TaskStatus:
+    return TaskStatus.FAILED
+
+
 @dataclass(frozen=True)
 class WorkerCapability(Generic[WorkerRequestT, WorkerResponseT]):
     name: str
     request_model: type[WorkerRequestT]
     response_model: type[WorkerResponseT]
     execute: WorkerExecutor[WorkerRequestT, WorkerResponseT]
+    request_factory: Callable[[OrchestratorRequest, OrchestrationContext], WorkerRequestT]
+    fallback_retryable: bool = False
+    failure_terminal_status: Callable[[OrchestrationContext], TaskStatus] = (
+        default_failure_terminal_status
+    )
 
 
 class UnknownWorkerCapabilityError(LookupError):
