@@ -18,6 +18,8 @@ python -m pip install -e ".[dev]"
 
 The runtime loads configuration from environment variables.
 
+If a `.env` file exists in the current working directory when you invoke the command, it is loaded automatically before settings validation. Existing environment variables still take precedence over `.env` values.
+
 ```bash
 export OPENAI_API_KEY="your-api-key"
 ```
@@ -32,6 +34,16 @@ export AI_ORCHESTRATION_RETRY_BUDGET="2"
 ```
 
 `OPENAI_API_KEY` is required for real CLI runs. The offline test suite stubs the provider and does not need a live key.
+
+Example `.env`:
+
+```bash
+OPENAI_API_KEY="your-api-key"
+AI_ORCHESTRATION_MODEL="openai:gpt-4o-mini"
+AI_ORCHESTRATION_TIMEOUT_SECONDS="30"
+AI_ORCHESTRATION_MAX_STEPS="6"
+AI_ORCHESTRATION_RETRY_BUDGET="2"
+```
 
 ## CLI usage
 

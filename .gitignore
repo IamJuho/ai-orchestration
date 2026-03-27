@@ -9,3 +9,6 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
+
+# Local environment configuration
+.env
