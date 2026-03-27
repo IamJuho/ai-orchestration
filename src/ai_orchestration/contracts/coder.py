@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,4 +25,4 @@ class CoderArtifact(BaseModel):
 class CoderResponse(BaseModel):
     status: TaskStatus
     artifacts: list[CoderArtifact] = Field(default_factory=list)
-    failure: Optional[Failure] = None
+    failure: Failure | None = None

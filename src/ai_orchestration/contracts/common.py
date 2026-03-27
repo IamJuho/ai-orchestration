@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -12,7 +12,7 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
-class FailureKind(str, Enum):
+class FailureKind(StrEnum):
     CONFIG = "config"
     PROVIDER = "provider"
     TIMEOUT = "timeout"
