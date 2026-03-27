@@ -1,7 +1,9 @@
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunError, UnexpectedModelBehavior
 
+from ai_orchestration.agents.base import OrchestrationContext
 from ai_orchestration.contracts.common import Failure, FailureKind, TaskStatus
+from ai_orchestration.contracts.orchestrator import OrchestratorRequest
 from ai_orchestration.contracts.researcher import ResearcherRequest, ResearcherResponse
 from ai_orchestration.deps import RuntimeDeps
 
@@ -10,6 +12,19 @@ researcher_agent = Agent(
     output_type=ResearcherResponse,
     instructions="You are the Researcher. Return concise, factual research notes only.",
 )
+
+
+def build_researcher_request(
+    request: OrchestratorRequest, context: OrchestrationContext
+) -> ResearcherRequest:
+    del context
+    envelope = request.envelope
+    return ResearcherRequest(
+        run_id=envelope.run_id,
+        task_id=envelope.task_id,
+        objective=envelope.objective,
+        constraints=envelope.constraints,
+    )
 
 
 async def execute_researcher(deps: RuntimeDeps, request: ResearcherRequest) -> ResearcherResponse:

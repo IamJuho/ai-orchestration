@@ -1,7 +1,10 @@
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunError, UnexpectedModelBehavior
 
+from ai_orchestration.agents.base import OrchestrationContext
+from ai_orchestration.contracts.coder import CoderArtifact
 from ai_orchestration.contracts.common import Failure, FailureKind, TaskStatus
+from ai_orchestration.contracts.orchestrator import OrchestratorRequest
 from ai_orchestration.contracts.reviewer import ReviewerRequest, ReviewerResponse
 from ai_orchestration.deps import RuntimeDeps
 
@@ -10,6 +13,26 @@ reviewer_agent = Agent(
     output_type=ReviewerResponse,
     instructions="You are the Reviewer. Return a review report with pass/fail guidance.",
 )
+
+
+def build_reviewer_request(
+    request: OrchestratorRequest, context: OrchestrationContext
+) -> ReviewerRequest:
+    envelope = request.envelope
+    return ReviewerRequest(
+        run_id=envelope.run_id,
+        task_id=envelope.task_id,
+        objective=envelope.objective,
+        candidate_artifacts=[
+            CoderArtifact.model_validate(artifact.model_dump())
+            for artifact in context.artifacts_by_worker.get("coder", [])
+        ],
+        constraints=envelope.constraints,
+    )
+
+
+def reviewer_terminal_status(context: OrchestrationContext) -> TaskStatus:
+    return TaskStatus.PARTIAL if context.artifacts_by_worker.get("coder") else TaskStatus.FAILED
 
 
 async def execute_reviewer(deps: RuntimeDeps, request: ReviewerRequest) -> ReviewerResponse:
