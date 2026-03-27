@@ -6,7 +6,9 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from ai_orchestration.agents.base import WorkerCapability
+from pydantic import ValidationError
+
+from ai_orchestration.agents.base import UnknownWorkerCapabilityError, WorkerCapability
 from ai_orchestration.agents.orchestrator import execute_orchestrator
 from ai_orchestration.agents.registry import get_worker_capability
 from ai_orchestration.contracts.common import Failure, FailureKind, TaskEnvelope, TaskStatus
@@ -154,7 +156,7 @@ async def _execute_with_terminal_handling(
     except Exception as exc:
         runtime_failure = Failure(
             kind=_failure_kind_for_exception(exc),
-            message="Runtime runner failed with unexpected exception.",
+            message="Runtime runner failed while executing orchestration.",
             details={
                 "exception_type": type(exc).__name__,
                 "exception_message": str(exc),
@@ -247,25 +249,43 @@ def _build_traced_capability_resolver(
             )
             await state_store.set_task_status(run_id, worker_task_id, TaskStatus.RUNNING)
 
-            response = await original_capability.execute(deps, request)
+            try:
+                response = await original_capability.execute(deps, request)
+            except asyncio.CancelledError:
+                await _persist_worker_completion(
+                    state_store=state_store,
+                    run_id=run_id,
+                    worker_task_id=worker_task_id,
+                    worker_name=worker_name,
+                    attempt=attempt,
+                    status=TaskStatus.FAILED,
+                    failure_kind=FailureKind.TIMEOUT,
+                )
+                raise
+            except Exception as exc:
+                await _persist_worker_completion(
+                    state_store=state_store,
+                    run_id=run_id,
+                    worker_task_id=worker_task_id,
+                    worker_name=worker_name,
+                    attempt=attempt,
+                    status=TaskStatus.FAILED,
+                    failure_kind=_failure_kind_for_exception(exc),
+                )
+                raise
+
             response_status = normalize_terminal_status(
                 getattr(response, "status", TaskStatus.FAILED)
             )
             failure = getattr(response, "failure", None)
-
-            await state_store.set_task_status(run_id, worker_task_id, response_status)
-            await state_store.append_trace_event(
-                run_id,
-                to_trace_event(
-                    WorkerCompletedEvent(
-                        run_id=run_id,
-                        task_id=worker_task_id,
-                        worker_name=worker_name,
-                        attempt=attempt,
-                        status=response_status,
-                        failure_kind=failure.kind if failure is not None else None,
-                    )
-                ),
+            await _persist_worker_completion(
+                state_store=state_store,
+                run_id=run_id,
+                worker_task_id=worker_task_id,
+                worker_name=worker_name,
+                attempt=attempt,
+                status=response_status,
+                failure_kind=failure.kind if failure is not None else None,
             )
 
             return response
@@ -278,6 +298,32 @@ def _build_traced_capability_resolver(
         )
 
     return traced_capability_resolver
+
+
+async def _persist_worker_completion(
+    *,
+    state_store: StateStore,
+    run_id: str,
+    worker_task_id: str,
+    worker_name: str,
+    attempt: int,
+    status: TaskStatus,
+    failure_kind: FailureKind | None,
+) -> None:
+    await state_store.set_task_status(run_id, worker_task_id, status)
+    await state_store.append_trace_event(
+        run_id,
+        to_trace_event(
+            WorkerCompletedEvent(
+                run_id=run_id,
+                task_id=worker_task_id,
+                worker_name=worker_name,
+                attempt=attempt,
+                status=status,
+                failure_kind=failure_kind,
+            )
+        ),
+    )
 
 
 async def _emit_retry_trace(
@@ -324,6 +370,10 @@ def _build_retry_notifier(
 
 
 def _failure_kind_for_exception(exc: Exception) -> FailureKind:
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return FailureKind.TIMEOUT
+    if isinstance(exc, (UnknownWorkerCapabilityError, LookupError, TypeError, AttributeError)):
+        return FailureKind.CONFIG
+    if isinstance(exc, (ValidationError, ValueError)):
         return FailureKind.VALIDATION
     return FailureKind.WORKER
