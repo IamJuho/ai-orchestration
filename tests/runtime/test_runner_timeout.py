@@ -4,8 +4,10 @@ from typing import Any
 
 import pytest
 
+from ai_orchestration.agents.base import OrchestrationContext
 from ai_orchestration.contracts.coder import CoderRequest, CoderResponse
 from ai_orchestration.contracts.common import FailureKind, TaskStatus
+from ai_orchestration.contracts.orchestrator import OrchestratorRequest
 from ai_orchestration.contracts.researcher import ResearcherRequest, ResearcherResponse
 from ai_orchestration.contracts.reviewer import ReviewerRequest, ReviewerResponse
 from ai_orchestration.deps import RuntimeDeps
@@ -15,11 +17,47 @@ from ai_orchestration.state.memory import InMemoryStateStore
 
 
 class StubCapability:
-    def __init__(self, execute: Callable[[RuntimeDeps, Any], Awaitable[Any]]) -> None:
+    def __init__(
+        self,
+        execute: Callable[[RuntimeDeps, Any], Awaitable[Any]],
+        request_factory: Callable[[OrchestratorRequest, OrchestrationContext], Any],
+        *,
+        fallback_retryable: bool = False,
+    ) -> None:
         self.execute = execute
         self.name = "stub"
         self.request_model = object
         self.response_model = object
+        self.request_factory = request_factory
+        self.fallback_retryable = fallback_retryable
+        self.failure_terminal_status = lambda context: TaskStatus.FAILED
+
+
+def _researcher_request(req: OrchestratorRequest, _: OrchestrationContext) -> ResearcherRequest:
+    return ResearcherRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        constraints=req.envelope.constraints,
+    )
+
+
+def _coder_request(req: OrchestratorRequest, _: OrchestrationContext) -> CoderRequest:
+    return CoderRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        constraints=req.envelope.constraints,
+    )
+
+
+def _reviewer_request(req: OrchestratorRequest, _: OrchestrationContext) -> ReviewerRequest:
+    return ReviewerRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        constraints=req.envelope.constraints,
+    )
 
 
 def _settings(*, timeout_seconds: float) -> Settings:
@@ -47,9 +85,15 @@ async def test_runner_timeout_persists_terminal_failure_state(
         raise AssertionError("Reviewer should not execute after researcher timeout")
 
     capabilities: dict[str, StubCapability] = {
-        "researcher": StubCapability(execute=execute_researcher),
-        "coder": StubCapability(execute=execute_coder),
-        "reviewer": StubCapability(execute=execute_reviewer),
+        "researcher": StubCapability(
+            execute=execute_researcher, request_factory=_researcher_request
+        ),
+        "coder": StubCapability(execute=execute_coder, request_factory=_coder_request),
+        "reviewer": StubCapability(
+            execute=execute_reviewer,
+            request_factory=_reviewer_request,
+            fallback_retryable=True,
+        ),
     }
 
     monkeypatch.setattr(

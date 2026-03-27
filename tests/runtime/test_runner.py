@@ -3,9 +3,10 @@ from typing import Any
 
 import pytest
 
-from ai_orchestration.agents.base import UnknownWorkerCapabilityError
+from ai_orchestration.agents.base import OrchestrationContext, UnknownWorkerCapabilityError
 from ai_orchestration.contracts.coder import CoderArtifact, CoderRequest, CoderResponse
 from ai_orchestration.contracts.common import Failure, FailureKind, TaskStatus
+from ai_orchestration.contracts.orchestrator import OrchestratorRequest
 from ai_orchestration.contracts.researcher import (
     ResearcherArtifact,
     ResearcherRequest,
@@ -19,11 +20,55 @@ from ai_orchestration.state.memory import InMemoryStateStore
 
 
 class StubCapability:
-    def __init__(self, execute: Callable[[RuntimeDeps, Any], Awaitable[Any]]) -> None:
+    def __init__(
+        self,
+        execute: Callable[[RuntimeDeps, Any], Awaitable[Any]],
+        request_factory: Callable[[OrchestratorRequest, OrchestrationContext], Any],
+        *,
+        fallback_retryable: bool = False,
+    ) -> None:
         self.execute = execute
         self.name = "stub"
         self.request_model = object
         self.response_model = object
+        self.request_factory = request_factory
+        self.fallback_retryable = fallback_retryable
+        self.failure_terminal_status = lambda context: TaskStatus.FAILED
+
+
+def _researcher_request(req: OrchestratorRequest, _: OrchestrationContext) -> ResearcherRequest:
+    return ResearcherRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        constraints=req.envelope.constraints,
+    )
+
+
+def _coder_request(req: OrchestratorRequest, ctx: OrchestrationContext) -> CoderRequest:
+    return CoderRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        research_artifacts=[
+            ResearcherArtifact.model_validate(artifact.model_dump())
+            for artifact in ctx.artifacts_by_worker.get("researcher", [])
+        ],
+        constraints=req.envelope.constraints,
+    )
+
+
+def _reviewer_request(req: OrchestratorRequest, ctx: OrchestrationContext) -> ReviewerRequest:
+    return ReviewerRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        candidate_artifacts=[
+            CoderArtifact.model_validate(artifact.model_dump())
+            for artifact in ctx.artifacts_by_worker.get("coder", [])
+        ],
+        constraints=req.envelope.constraints,
+    )
 
 
 def _settings(*, timeout_seconds: float = 1.0, retry_budget: int = 2) -> Settings:
@@ -72,9 +117,15 @@ async def test_runner_persists_successful_run_and_append_only_trace(
         )
 
     capabilities: dict[str, StubCapability] = {
-        "researcher": StubCapability(execute=execute_researcher),
-        "coder": StubCapability(execute=execute_coder),
-        "reviewer": StubCapability(execute=execute_reviewer),
+        "researcher": StubCapability(
+            execute=execute_researcher, request_factory=_researcher_request
+        ),
+        "coder": StubCapability(execute=execute_coder, request_factory=_coder_request),
+        "reviewer": StubCapability(
+            execute=execute_reviewer,
+            request_factory=_reviewer_request,
+            fallback_retryable=True,
+        ),
     }
 
     monkeypatch.setattr(
@@ -143,9 +194,15 @@ async def test_runner_persists_failed_run_and_terminal_failure_trace(
         raise AssertionError("Reviewer should not execute after non-retryable researcher failure")
 
     capabilities: dict[str, StubCapability] = {
-        "researcher": StubCapability(execute=execute_researcher),
-        "coder": StubCapability(execute=execute_coder),
-        "reviewer": StubCapability(execute=execute_reviewer),
+        "researcher": StubCapability(
+            execute=execute_researcher, request_factory=_researcher_request
+        ),
+        "coder": StubCapability(execute=execute_coder, request_factory=_coder_request),
+        "reviewer": StubCapability(
+            execute=execute_reviewer,
+            request_factory=_reviewer_request,
+            fallback_retryable=True,
+        ),
     }
 
     monkeypatch.setattr(

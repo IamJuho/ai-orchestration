@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from ai_orchestration.agents.base import OrchestrationContext
 from ai_orchestration.agents.orchestrator import execute_orchestrator
 from ai_orchestration.contracts.coder import CoderArtifact, CoderRequest, CoderResponse
 from ai_orchestration.contracts.common import TaskEnvelope, TaskStatus
@@ -31,8 +32,17 @@ def _deps(*, max_steps: int = 6, retry_budget: int = 2) -> RuntimeDeps:
 
 
 class StubCapability:
-    def __init__(self, execute: Callable[[RuntimeDeps, Any], Awaitable[Any]]) -> None:
+    def __init__(
+        self,
+        execute: Callable[[RuntimeDeps, Any], Awaitable[Any]],
+        request_factory: Callable[[OrchestratorRequest, OrchestrationContext], Any],
+        *,
+        fallback_retryable: bool = False,
+    ) -> None:
         self.execute = execute
+        self.request_factory = request_factory
+        self.fallback_retryable = fallback_retryable
+        self.failure_terminal_status = lambda context: TaskStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -66,10 +76,60 @@ async def test_orchestrator_runs_fixed_sequence_and_returns_typed_final_response
         )
 
     capabilities: dict[str, StubCapability] = {
-        "researcher": StubCapability(execute=execute_researcher),
-        "coder": StubCapability(execute=execute_coder),
-        "reviewer": StubCapability(execute=execute_reviewer),
+        "researcher": StubCapability(
+            execute=execute_researcher,
+            request_factory=lambda req, _: ResearcherRequest(
+                run_id=req.envelope.run_id,
+                task_id=req.envelope.task_id,
+                objective=req.envelope.objective,
+                constraints=req.envelope.constraints,
+            ),
+        ),
+        "coder": StubCapability(
+            execute=execute_coder,
+            request_factory=lambda req, _: ResearcherRequest(
+                run_id=req.envelope.run_id,
+                task_id=req.envelope.task_id,
+                objective=req.envelope.objective,
+            ),
+        ),
+        "reviewer": StubCapability(
+            execute=execute_reviewer,
+            request_factory=lambda req, _: ResearcherRequest(
+                run_id=req.envelope.run_id,
+                task_id=req.envelope.task_id,
+                objective=req.envelope.objective,
+            ),
+            fallback_retryable=True,
+        ),
     }
+
+    capabilities["researcher"].request_factory = lambda req, _: ResearcherRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        constraints=req.envelope.constraints,
+    )
+    capabilities["coder"].request_factory = lambda req, ctx: CoderRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        research_artifacts=[
+            ResearcherArtifact.model_validate(artifact.model_dump())
+            for artifact in ctx.artifacts_by_worker.get("researcher", [])
+        ],
+        constraints=req.envelope.constraints,
+    )
+    capabilities["reviewer"].request_factory = lambda req, ctx: ReviewerRequest(
+        run_id=req.envelope.run_id,
+        task_id=req.envelope.task_id,
+        objective=req.envelope.objective,
+        candidate_artifacts=[
+            CoderArtifact.model_validate(artifact.model_dump())
+            for artifact in ctx.artifacts_by_worker.get("coder", [])
+        ],
+        constraints=req.envelope.constraints,
+    )
 
     def fake_get_worker_capability(name: str) -> StubCapability:
         return capabilities[name]

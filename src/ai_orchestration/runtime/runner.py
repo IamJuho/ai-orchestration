@@ -235,43 +235,45 @@ def _build_traced_capability_resolver(
             attempt = attempts_by_worker.get(worker_name, 0) + 1
             attempts_by_worker[worker_name] = attempt
             worker_task_id = f"{root_task_id}:{worker_name}"
-
-            await state_store.append_trace_event(
-                run_id,
-                to_trace_event(
-                    WorkerDispatchedEvent(
-                        run_id=run_id,
-                        task_id=worker_task_id,
-                        worker_name=worker_name,
-                        attempt=attempt,
-                    )
-                ),
-            )
-            await state_store.set_task_status(run_id, worker_task_id, TaskStatus.RUNNING)
+            started = True
 
             try:
+                await state_store.append_trace_event(
+                    run_id,
+                    to_trace_event(
+                        WorkerDispatchedEvent(
+                            run_id=run_id,
+                            task_id=worker_task_id,
+                            worker_name=worker_name,
+                            attempt=attempt,
+                        )
+                    ),
+                )
+                await state_store.set_task_status(run_id, worker_task_id, TaskStatus.RUNNING)
                 response = await original_capability.execute(deps, request)
             except asyncio.CancelledError:
-                await _persist_worker_completion(
-                    state_store=state_store,
-                    run_id=run_id,
-                    worker_task_id=worker_task_id,
-                    worker_name=worker_name,
-                    attempt=attempt,
-                    status=TaskStatus.FAILED,
-                    failure_kind=FailureKind.TIMEOUT,
-                )
+                if started:
+                    await _persist_worker_completion(
+                        state_store=state_store,
+                        run_id=run_id,
+                        worker_task_id=worker_task_id,
+                        worker_name=worker_name,
+                        attempt=attempt,
+                        status=TaskStatus.FAILED,
+                        failure_kind=FailureKind.TIMEOUT,
+                    )
                 raise
             except Exception as exc:
-                await _persist_worker_completion(
-                    state_store=state_store,
-                    run_id=run_id,
-                    worker_task_id=worker_task_id,
-                    worker_name=worker_name,
-                    attempt=attempt,
-                    status=TaskStatus.FAILED,
-                    failure_kind=_failure_kind_for_exception(exc),
-                )
+                if started:
+                    await _persist_worker_completion(
+                        state_store=state_store,
+                        run_id=run_id,
+                        worker_task_id=worker_task_id,
+                        worker_name=worker_name,
+                        attempt=attempt,
+                        status=TaskStatus.FAILED,
+                        failure_kind=_failure_kind_for_exception(exc),
+                    )
                 raise
 
             response_status = normalize_terminal_status(
@@ -295,6 +297,9 @@ def _build_traced_capability_resolver(
             request_model=original_capability.request_model,
             response_model=original_capability.response_model,
             execute=execute_with_tracing,
+            request_factory=original_capability.request_factory,
+            fallback_retryable=original_capability.fallback_retryable,
+            failure_terminal_status=original_capability.failure_terminal_status,
         )
 
     return traced_capability_resolver
@@ -372,7 +377,7 @@ def _build_retry_notifier(
 def _failure_kind_for_exception(exc: Exception) -> FailureKind:
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
         return FailureKind.TIMEOUT
-    if isinstance(exc, (UnknownWorkerCapabilityError, LookupError, TypeError, AttributeError)):
+    if isinstance(exc, (UnknownWorkerCapabilityError, LookupError)):
         return FailureKind.CONFIG
     if isinstance(exc, (ValidationError, ValueError)):
         return FailureKind.VALIDATION
