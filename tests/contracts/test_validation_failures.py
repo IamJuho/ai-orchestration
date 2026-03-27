@@ -29,6 +29,18 @@ def test_artifact_rejects_missing_required_content() -> None:
         )
 
 
+def test_artifact_rejects_empty_kind_and_producer() -> None:
+    with pytest.raises(ValidationError):
+        Artifact.model_validate(
+            {
+                "artifact_id": "a-2",
+                "kind": "",
+                "producer": "",
+                "content": "payload",
+            }
+        )
+
+
 def test_task_envelope_rejects_missing_objective() -> None:
     with pytest.raises(ValidationError):
         TaskEnvelope.model_validate({"run_id": "run-1", "task_id": "task-1"})

@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,8 +29,8 @@ class Failure(BaseModel):
 
 class Artifact(BaseModel):
     artifact_id: str
-    kind: Literal["research_notes", "implementation_plan", "review_report", "final_answer"]
-    producer: Literal["orchestrator", "researcher", "coder", "reviewer"]
+    kind: str = Field(min_length=1)
+    producer: str = Field(min_length=1)
     content: str
     metadata: dict[str, str] = Field(default_factory=dict)
 

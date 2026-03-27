@@ -35,6 +35,18 @@ def test_common_contracts_happy_path() -> None:
     assert envelope.input_artifacts[0].kind == "research_notes"
 
 
+def test_common_artifact_allows_future_worker_extension() -> None:
+    artifact = Artifact(
+        artifact_id="a-2",
+        kind="publication_packet",
+        producer="publisher",
+        content="handoff bundle",
+    )
+
+    assert artifact.kind == "publication_packet"
+    assert artifact.producer == "publisher"
+
+
 def test_role_contracts_happy_path() -> None:
     researcher_request = ResearcherRequest(run_id="run-1", task_id="t-r", objective="Investigate")
     researcher_response = ResearcherResponse(
