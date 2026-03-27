@@ -8,6 +8,12 @@ Requires Python 3.11.
 uv sync --extra dev
 ```
 
+The plan’s editable-install verification path is also supported:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
 ## Environment setup
 
 The runtime loads configuration from environment variables.
@@ -58,7 +64,7 @@ Supported flags:
 
 - `--objective`, required task description
 - `--json`, emit the final response as compact JSON
-- `--timeout-seconds`, override the runtime timeout
+- `--timeout-seconds`, override the per-worker call timeout (the runner also applies a bounded orchestration-wide safety timeout derived from this value)
 - `--max-steps`, override the orchestration step budget
 
 ## Verification

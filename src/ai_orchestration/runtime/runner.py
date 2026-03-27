@@ -131,6 +131,7 @@ async def _execute_with_terminal_handling(
     traced_capability_resolver: Callable[[str], WorkerCapability[Any, Any]],
     retry_notifier: Callable[[str, int, Failure], asyncio.Future[None] | Any],
 ) -> FinalResponse:
+    orchestration_timeout = timeout_seconds * max(1, deps.config.max_steps)
     try:
         return await asyncio.wait_for(
             execute_orchestrator(
@@ -139,13 +140,16 @@ async def _execute_with_terminal_handling(
                 capability_resolver=traced_capability_resolver,
                 on_retry=retry_notifier,
             ),
-            timeout=timeout_seconds * max(1, deps.config.max_steps),
+            timeout=orchestration_timeout,
         )
     except TimeoutError:
         timeout_failure = Failure(
             kind=FailureKind.TIMEOUT,
             message=("Runtime runner timed out before orchestration completed."),
-            details={"timeout_seconds": str(timeout_seconds)},
+            details={
+                "worker_timeout_seconds": str(timeout_seconds),
+                "orchestration_timeout_seconds": str(orchestration_timeout),
+            },
         )
         return FinalResponse(
             run_id=request.envelope.run_id,
