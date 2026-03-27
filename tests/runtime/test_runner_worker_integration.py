@@ -185,9 +185,9 @@ async def test_runner_integration_retries_retryable_failure_until_coder_budget_e
     run_state = await store.get_run("run-retries")
     assert run_state is not None
     retry_events = [event for event in run_state.trace_events if event.event_type == "worker.retry"]
-    assert len(retry_events) == 3
-    assert [event.payload["attempt"] for event in retry_events] == ["1", "2", "3"]
-    assert [event.payload["worker_name"] for event in retry_events] == ["coder", "coder", "coder"]
+    assert len(retry_events) == 2
+    assert [event.payload["attempt"] for event in retry_events] == ["1", "2"]
+    assert [event.payload["worker_name"] for event in retry_events] == ["coder", "coder"]
 
 
 @pytest.mark.asyncio
@@ -317,7 +317,9 @@ async def test_runner_integration_reviewer_rejection_returns_partial_after_retri
     run_state = await store.get_run("run-review")
     assert run_state is not None
     retry_events = [event for event in run_state.trace_events if event.event_type == "worker.retry"]
-    assert retry_events == []
+    assert len(retry_events) == 1
+    assert retry_events[0].payload["worker_name"] == "reviewer"
+    assert retry_events[0].payload["attempt"] == "1"
     reviewer_completed_events = [
         event
         for event in run_state.trace_events

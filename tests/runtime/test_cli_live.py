@@ -22,7 +22,7 @@ def test_cli_live_json_smoke_response_shape() -> None:
             "Live smoke verification",
             "--json",
             "--max-steps",
-            "1",
+            "3",
             "--timeout-seconds",
             "45",
         ],

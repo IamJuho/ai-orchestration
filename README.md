@@ -98,6 +98,6 @@ Run the equivalent CLI smoke command directly:
 uv run --extra dev python -m ai_orchestration.runtime.cli \
   --objective "Live smoke verification" \
   --json \
-  --max-steps 1 \
+  --max-steps 3 \
   --timeout-seconds 45
 ```
