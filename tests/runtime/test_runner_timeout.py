@@ -30,7 +30,16 @@ class StubCapability:
         self.response_model = object
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
+        self.terminal_on_success = False
+        self.success_summary: str | None = None
         self.failure_terminal_status = lambda context: TaskStatus.FAILED
+        self.max_steps_summary = lambda name: (
+            f"Orchestrator exceeded max_steps before {name} completed."
+        )
+        self.non_retryable_summary = lambda name: (
+            f"{name.capitalize()} failed with non-retryable error."
+        )
+        self.retry_exhausted_summary = lambda name: f"{name.capitalize()} retry budget exhausted."
 
 
 def _researcher_request(req: OrchestratorRequest, _: OrchestrationContext) -> ResearcherRequest:

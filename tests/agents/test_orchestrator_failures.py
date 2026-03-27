@@ -53,9 +53,18 @@ class StubCapability:
         self.execute = execute
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
+        self.terminal_on_success = False
+        self.success_summary: str | None = None
         self.failure_terminal_status = failure_terminal_status or (
             lambda context: TaskStatus.FAILED
         )
+        self.max_steps_summary = lambda name: (
+            f"Orchestrator exceeded max_steps before {name} completed."
+        )
+        self.non_retryable_summary = lambda name: (
+            f"{name.capitalize()} failed with non-retryable error."
+        )
+        self.retry_exhausted_summary = lambda name: f"{name.capitalize()} retry budget exhausted."
 
 
 def _researcher_request(req: OrchestratorRequest, _: OrchestrationContext) -> ResearcherRequest:
@@ -132,6 +141,12 @@ async def test_orchestrator_retries_retryable_worker_failure_until_budget_exhaus
             failure_terminal_status=_reviewer_terminal_status,
         ),
     }
+    capabilities["reviewer"].non_retryable_summary = lambda _: (
+        "Reviewer rejected candidate output with non-retryable failure."
+    )
+    capabilities["reviewer"].retry_exhausted_summary = lambda _: (
+        "Reviewer rejected candidate output after retry budget exhausted."
+    )
 
     monkeypatch.setattr(
         "ai_orchestration.agents.orchestrator.get_worker_capability",
@@ -185,6 +200,12 @@ async def test_orchestrator_fails_fast_for_non_retryable_error(
             failure_terminal_status=_reviewer_terminal_status,
         ),
     }
+    capabilities["reviewer"].non_retryable_summary = lambda _: (
+        "Reviewer rejected candidate output with non-retryable failure."
+    )
+    capabilities["reviewer"].retry_exhausted_summary = lambda _: (
+        "Reviewer rejected candidate output after retry budget exhausted."
+    )
 
     monkeypatch.setattr(
         "ai_orchestration.agents.orchestrator.get_worker_capability",
@@ -234,6 +255,12 @@ async def test_orchestrator_reviewer_rejection_becomes_partial_after_retries(
             failure_terminal_status=_reviewer_terminal_status,
         ),
     }
+    capabilities["reviewer"].non_retryable_summary = lambda _: (
+        "Reviewer rejected candidate output with non-retryable failure."
+    )
+    capabilities["reviewer"].retry_exhausted_summary = lambda _: (
+        "Reviewer rejected candidate output after retry budget exhausted."
+    )
 
     monkeypatch.setattr(
         "ai_orchestration.agents.orchestrator.get_worker_capability",
@@ -283,6 +310,12 @@ async def test_orchestrator_stops_when_max_steps_reached(
             failure_terminal_status=_reviewer_terminal_status,
         ),
     }
+    capabilities["reviewer"].non_retryable_summary = lambda _: (
+        "Reviewer rejected candidate output with non-retryable failure."
+    )
+    capabilities["reviewer"].retry_exhausted_summary = lambda _: (
+        "Reviewer rejected candidate output after retry budget exhausted."
+    )
 
     monkeypatch.setattr(
         "ai_orchestration.agents.orchestrator.get_worker_capability",

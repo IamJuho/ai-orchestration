@@ -139,7 +139,7 @@ async def _execute_with_terminal_handling(
                 capability_resolver=traced_capability_resolver,
                 on_retry=retry_notifier,
             ),
-            timeout=timeout_seconds,
+            timeout=timeout_seconds * max(1, deps.config.max_steps),
         )
     except TimeoutError:
         timeout_failure = Failure(
@@ -250,7 +250,10 @@ def _build_traced_capability_resolver(
                     ),
                 )
                 await state_store.set_task_status(run_id, worker_task_id, TaskStatus.RUNNING)
-                response = await original_capability.execute(deps, request)
+                response = await asyncio.wait_for(
+                    original_capability.execute(deps, request),
+                    timeout=deps.config.timeout_seconds,
+                )
             except asyncio.CancelledError:
                 if started:
                     await _persist_worker_completion(
@@ -262,6 +265,17 @@ def _build_traced_capability_resolver(
                         status=TaskStatus.FAILED,
                         failure_kind=FailureKind.TIMEOUT,
                     )
+                raise
+            except TimeoutError:
+                await _persist_worker_completion(
+                    state_store=state_store,
+                    run_id=run_id,
+                    worker_task_id=worker_task_id,
+                    worker_name=worker_name,
+                    attempt=attempt,
+                    status=TaskStatus.FAILED,
+                    failure_kind=FailureKind.TIMEOUT,
+                )
                 raise
             except Exception as exc:
                 if started:
@@ -299,7 +313,12 @@ def _build_traced_capability_resolver(
             execute=execute_with_tracing,
             request_factory=original_capability.request_factory,
             fallback_retryable=original_capability.fallback_retryable,
+            terminal_on_success=original_capability.terminal_on_success,
+            success_summary=original_capability.success_summary,
             failure_terminal_status=original_capability.failure_terminal_status,
+            max_steps_summary=original_capability.max_steps_summary,
+            non_retryable_summary=original_capability.non_retryable_summary,
+            retry_exhausted_summary=original_capability.retry_exhausted_summary,
         )
 
     return traced_capability_resolver

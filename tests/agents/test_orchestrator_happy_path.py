@@ -42,7 +42,16 @@ class StubCapability:
         self.execute = execute
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
+        self.terminal_on_success = False
+        self.success_summary: str | None = None
         self.failure_terminal_status = lambda context: TaskStatus.FAILED
+        self.max_steps_summary = lambda name: (
+            f"Orchestrator exceeded max_steps before {name} completed."
+        )
+        self.non_retryable_summary = lambda name: (
+            f"{name.capitalize()} failed with non-retryable error."
+        )
+        self.retry_exhausted_summary = lambda name: f"{name.capitalize()} retry budget exhausted."
 
 
 @pytest.mark.asyncio
@@ -130,6 +139,10 @@ async def test_orchestrator_runs_fixed_sequence_and_returns_typed_final_response
         ],
         constraints=req.envelope.constraints,
     )
+    capabilities["reviewer"].terminal_on_success = True
+    capabilities[
+        "reviewer"
+    ].success_summary = "Completed researcher -> coder -> reviewer sequence successfully."
 
     def fake_get_worker_capability(name: str) -> StubCapability:
         return capabilities[name]
