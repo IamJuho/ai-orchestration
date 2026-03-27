@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any
 
 from pydantic import BaseModel
 
+from ai_orchestration.agents.base import WorkerCapability
 from ai_orchestration.agents.registry import get_worker_capability
 from ai_orchestration.contracts.coder import CoderArtifact, CoderRequest
 from ai_orchestration.contracts.common import Artifact, Failure, FailureKind, TaskStatus
@@ -11,6 +13,9 @@ from ai_orchestration.contracts.orchestrator import FinalResponse, OrchestratorR
 from ai_orchestration.contracts.researcher import ResearcherArtifact, ResearcherRequest
 from ai_orchestration.contracts.reviewer import ReviewerRequest
 from ai_orchestration.deps import RuntimeDeps
+
+CapabilityResolver = Callable[[str], WorkerCapability[Any, Any]]
+RetryNotifier = Callable[[str, int, Failure], Awaitable[None]]
 
 
 def _to_common_artifacts(
@@ -56,7 +61,14 @@ def _review_terminal_status(candidate_artifacts: list[CoderArtifact]) -> TaskSta
     return TaskStatus.PARTIAL if candidate_artifacts else TaskStatus.FAILED
 
 
-async def execute_orchestrator(deps: RuntimeDeps, request: OrchestratorRequest) -> FinalResponse:
+async def execute_orchestrator(
+    deps: RuntimeDeps,
+    request: OrchestratorRequest,
+    *,
+    capability_resolver: CapabilityResolver | None = None,
+    on_retry: RetryNotifier | None = None,
+) -> FinalResponse:
+    resolve_capability = capability_resolver or get_worker_capability
     envelope = request.envelope
     retry_budget = deps.config.retry_budget
     max_steps = deps.config.max_steps
@@ -65,7 +77,7 @@ async def execute_orchestrator(deps: RuntimeDeps, request: OrchestratorRequest) 
     artifacts: list[Artifact] = list(envelope.input_artifacts)
     failures: list[Failure] = []
 
-    researcher_capability = get_worker_capability("researcher")
+    researcher_capability = resolve_capability("researcher")
     researcher_request = ResearcherRequest(
         run_id=envelope.run_id,
         task_id=envelope.task_id,
@@ -112,8 +124,10 @@ async def execute_orchestrator(deps: RuntimeDeps, request: OrchestratorRequest) 
                 artifacts=artifacts,
                 failures=failures,
             )
+        if on_retry is not None:
+            await on_retry("researcher", attempt + 1, failure)
 
-    coder_capability = get_worker_capability("coder")
+    coder_capability = resolve_capability("coder")
     coder_request = CoderRequest(
         run_id=envelope.run_id,
         task_id=envelope.task_id,
@@ -161,8 +175,10 @@ async def execute_orchestrator(deps: RuntimeDeps, request: OrchestratorRequest) 
                 artifacts=artifacts,
                 failures=failures,
             )
+        if on_retry is not None:
+            await on_retry("coder", attempt + 1, failure)
 
-    reviewer_capability = get_worker_capability("reviewer")
+    reviewer_capability = resolve_capability("reviewer")
     reviewer_request = ReviewerRequest(
         run_id=envelope.run_id,
         task_id=envelope.task_id,
@@ -220,6 +236,8 @@ async def execute_orchestrator(deps: RuntimeDeps, request: OrchestratorRequest) 
                 artifacts=artifacts,
                 failures=failures,
             )
+        if on_retry is not None:
+            await on_retry("reviewer", attempt + 1, failure)
 
     return _failed_response(
         run_id=envelope.run_id,

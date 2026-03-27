@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -68,11 +67,12 @@ async def run_orchestration(
 ) -> RunnerResult:
     store = state_store or InMemoryStateStore()
     run_id = run_id_factory()
+    deps = build_runtime_deps(config=config, state_store=store)
     await store.create_run(
         run_id,
         metadata={
             "objective": objective,
-            "provider": "openai",
+            "provider": deps.provider_label,
             "model": config.model_name,
         },
     )
@@ -82,7 +82,6 @@ async def run_orchestration(
         to_trace_event(RunStartedEvent(run_id=run_id, task_id=task_id, objective=objective)),
     )
 
-    deps = build_runtime_deps(config=config, state_store=store)
     request = OrchestratorRequest(
         envelope=TaskEnvelope(run_id=run_id, task_id=task_id, objective=objective)
     )
@@ -98,6 +97,11 @@ async def run_orchestration(
         request=request,
         timeout_seconds=config.timeout_seconds,
         traced_capability_resolver=traced_resolver,
+        retry_notifier=_build_retry_notifier(
+            state_store=store,
+            run_id=run_id,
+            root_task_id=task_id,
+        ),
     )
 
     normalized_status = normalize_terminal_status(terminal.status)
@@ -123,42 +127,45 @@ async def _execute_with_terminal_handling(
     request: OrchestratorRequest,
     timeout_seconds: float,
     traced_capability_resolver: Callable[[str], WorkerCapability[Any, Any]],
+    retry_notifier: Callable[[str, int, Failure], asyncio.Future[None] | Any],
 ) -> FinalResponse:
-    import ai_orchestration.agents.orchestrator as orchestrator_module
-
-    with _patched_orchestrator_capability_resolver(
-        orchestrator_module=orchestrator_module,
-        resolver=traced_capability_resolver,
-    ):
-        try:
-            return await asyncio.wait_for(
-                execute_orchestrator(deps=deps, request=request),
-                timeout=timeout_seconds,
-            )
-        except TimeoutError:
-            timeout_failure = Failure(
-                kind=FailureKind.TIMEOUT,
-                message=("Runtime runner timed out before orchestration completed."),
-                details={"timeout_seconds": str(timeout_seconds)},
-            )
-            return FinalResponse(
-                run_id=request.envelope.run_id,
-                status=TaskStatus.FAILED,
-                summary="Runtime orchestration timed out.",
-                failures=[timeout_failure],
-            )
-        except Exception as exc:
-            runtime_failure = Failure(
-                kind=FailureKind.WORKER,
-                message="Runtime runner failed with unexpected exception.",
-                details={"exception_type": type(exc).__name__},
-            )
-            return FinalResponse(
-                run_id=request.envelope.run_id,
-                status=TaskStatus.FAILED,
-                summary="Runtime orchestration failed due to unexpected exception.",
-                failures=[runtime_failure],
-            )
+    try:
+        return await asyncio.wait_for(
+            execute_orchestrator(
+                deps=deps,
+                request=request,
+                capability_resolver=traced_capability_resolver,
+                on_retry=retry_notifier,
+            ),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        timeout_failure = Failure(
+            kind=FailureKind.TIMEOUT,
+            message=("Runtime runner timed out before orchestration completed."),
+            details={"timeout_seconds": str(timeout_seconds)},
+        )
+        return FinalResponse(
+            run_id=request.envelope.run_id,
+            status=TaskStatus.FAILED,
+            summary="Runtime orchestration timed out.",
+            failures=[timeout_failure],
+        )
+    except Exception as exc:
+        runtime_failure = Failure(
+            kind=_failure_kind_for_exception(exc),
+            message="Runtime runner failed with unexpected exception.",
+            details={
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+            },
+        )
+        return FinalResponse(
+            run_id=request.envelope.run_id,
+            status=TaskStatus.FAILED,
+            summary="Runtime orchestration failed due to unexpected exception.",
+            failures=[runtime_failure],
+        )
 
 
 async def _persist_terminal_state(
@@ -261,25 +268,6 @@ def _build_traced_capability_resolver(
                 ),
             )
 
-            if (
-                response_status is not TaskStatus.SUCCESS
-                and failure is not None
-                and failure.retryable
-            ):
-                await state_store.append_trace_event(
-                    run_id,
-                    to_trace_event(
-                        WorkerRetryEvent(
-                            run_id=run_id,
-                            task_id=worker_task_id,
-                            worker_name=worker_name,
-                            attempt=attempt,
-                            reason=failure.message,
-                            failure_kind=failure.kind,
-                        )
-                    ),
-                )
-
             return response
 
         return WorkerCapability(
@@ -292,15 +280,50 @@ def _build_traced_capability_resolver(
     return traced_capability_resolver
 
 
-@contextmanager
-def _patched_orchestrator_capability_resolver(
+async def _emit_retry_trace(
     *,
-    orchestrator_module: Any,
-    resolver: Callable[[str], WorkerCapability[Any, Any]],
-) -> Iterator[None]:
-    original_resolver = orchestrator_module.get_worker_capability
-    orchestrator_module.get_worker_capability = resolver
-    try:
-        yield
-    finally:
-        orchestrator_module.get_worker_capability = original_resolver
+    state_store: StateStore,
+    run_id: str,
+    root_task_id: str,
+    worker_name: str,
+    attempt: int,
+    failure: Failure,
+) -> None:
+    await state_store.append_trace_event(
+        run_id,
+        to_trace_event(
+            WorkerRetryEvent(
+                run_id=run_id,
+                task_id=f"{root_task_id}:{worker_name}",
+                worker_name=worker_name,
+                attempt=attempt,
+                reason=failure.message,
+                failure_kind=failure.kind,
+            )
+        ),
+    )
+
+
+def _build_retry_notifier(
+    *,
+    state_store: StateStore,
+    run_id: str,
+    root_task_id: str,
+) -> Callable[[str, int, Failure], Any]:
+    async def notify(worker_name: str, attempt: int, failure: Failure) -> None:
+        await _emit_retry_trace(
+            state_store=state_store,
+            run_id=run_id,
+            root_task_id=root_task_id,
+            worker_name=worker_name,
+            attempt=attempt,
+            failure=failure,
+        )
+
+    return notify
+
+
+def _failure_kind_for_exception(exc: Exception) -> FailureKind:
+    if isinstance(exc, ValueError):
+        return FailureKind.VALIDATION
+    return FailureKind.WORKER
