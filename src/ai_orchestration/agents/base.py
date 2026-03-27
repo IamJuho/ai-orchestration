@@ -45,6 +45,11 @@ def default_retry_exhausted_summary(name: str) -> str:
     return f"{name.capitalize()} retry budget exhausted."
 
 
+def default_success_summary(sequence: tuple[str, ...]) -> str:
+    joined = " -> ".join(sequence)
+    return f"Completed {joined} sequence successfully."
+
+
 @dataclass(frozen=True)
 class WorkerCapability(Generic[WorkerRequestT, WorkerResponseT]):
     name: str
@@ -53,14 +58,13 @@ class WorkerCapability(Generic[WorkerRequestT, WorkerResponseT]):
     execute: WorkerExecutor[WorkerRequestT, WorkerResponseT]
     request_factory: Callable[[OrchestratorRequest, OrchestrationContext], WorkerRequestT]
     fallback_retryable: bool = False
-    terminal_on_success: bool = False
-    success_summary: str | None = None
     failure_terminal_status: Callable[[OrchestrationContext], TaskStatus] = (
         default_failure_terminal_status
     )
     max_steps_summary: Callable[[str], str] = default_max_steps_summary
     non_retryable_summary: Callable[[str], str] = default_non_retryable_summary
     retry_exhausted_summary: Callable[[str], str] = default_retry_exhausted_summary
+    success_summary: Callable[[tuple[str, ...]], str] = default_success_summary
 
 
 class UnknownWorkerCapabilityError(LookupError):
