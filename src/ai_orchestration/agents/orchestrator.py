@@ -92,7 +92,7 @@ def _max_steps_response(
     return _failed_response(
         run_id=request.envelope.run_id,
         status=terminal_status,
-        summary=f"Orchestrator exceeded max_steps before {step.worker_name} completed.",
+        summary=capability.max_steps_summary(step.worker_name),
         context=state.context,
         extra_failures=(limit_failure,),
     )
@@ -106,13 +106,10 @@ def _non_retryable_response(
     state: OrchestratorState,
 ) -> FinalResponse:
     terminal_status = capability.failure_terminal_status(state.context)
-    summary = f"{step.worker_name.capitalize()} failed with non-retryable error."
-    if step.worker_name == "reviewer":
-        summary = "Reviewer rejected candidate output with non-retryable failure."
     return _failed_response(
         run_id=request.envelope.run_id,
         status=terminal_status,
-        summary=summary,
+        summary=capability.non_retryable_summary(step.worker_name),
         context=state.context,
     )
 
@@ -125,13 +122,10 @@ def _retry_exhausted_response(
     state: OrchestratorState,
 ) -> FinalResponse:
     terminal_status = capability.failure_terminal_status(state.context)
-    summary = f"{step.worker_name.capitalize()} retry budget exhausted."
-    if step.worker_name == "reviewer":
-        summary = "Reviewer rejected candidate output after retry budget exhausted."
     return _failed_response(
         run_id=request.envelope.run_id,
         status=terminal_status,
-        summary=summary,
+        summary=capability.retry_exhausted_summary(step.worker_name),
         context=state.context,
     )
 
@@ -139,6 +133,7 @@ def _retry_exhausted_response(
 def _handle_step_success(
     *,
     step: WorkerStep,
+    capability: WorkerCapability[Any, Any],
     request: OrchestratorRequest,
     state: OrchestratorState,
     response: BaseModel,
@@ -147,13 +142,13 @@ def _handle_step_success(
     state.context.artifacts.extend(artifacts)
     state.context.artifacts_by_worker[step.worker_name] = artifacts
 
-    if step.worker_name != "reviewer":
+    if not capability.terminal_on_success:
         return None
 
     return FinalResponse(
         run_id=request.envelope.run_id,
         status=TaskStatus.SUCCESS,
-        summary="Completed researcher -> coder -> reviewer sequence successfully.",
+        summary=capability.success_summary or f"Completed {step.worker_name} successfully.",
         artifacts=state.context.artifacts,
         failures=state.context.failures,
     )
@@ -187,7 +182,13 @@ async def _execute_worker_step(
         response = await capability.execute(deps, worker_request)
 
         if response.status is TaskStatus.SUCCESS:
-            return _handle_step_success(step=step, request=request, state=state, response=response)
+            return _handle_step_success(
+                step=step,
+                capability=capability,
+                request=request,
+                state=state,
+                response=response,
+            )
 
         failure = response.failure or _fallback_failure(
             worker_name=step.worker_name,
