@@ -30,8 +30,9 @@ class StubCapability:
         self.response_model = object
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
-        self.terminal_on_success = False
-        self.success_summary: str | None = None
+        self.success_summary = lambda sequence: (
+            f"Completed {' -> '.join(sequence)} sequence successfully."
+        )
         self.failure_terminal_status = lambda context: TaskStatus.FAILED
         self.max_steps_summary = lambda name: (
             f"Orchestrator exceeded max_steps before {name} completed."

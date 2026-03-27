@@ -33,8 +33,9 @@ class StubCapability:
         self.response_model = object
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
-        self.terminal_on_success = False
-        self.success_summary: str | None = None
+        self.success_summary = lambda sequence: (
+            f"Completed {' -> '.join(sequence)} sequence successfully."
+        )
         self.failure_terminal_status = lambda context: TaskStatus.FAILED
         self.max_steps_summary = lambda name: (
             f"Orchestrator exceeded max_steps before {name} completed."
@@ -136,10 +137,6 @@ async def test_runner_persists_successful_run_and_append_only_trace(
             fallback_retryable=True,
         ),
     }
-    capabilities["reviewer"].terminal_on_success = True
-    capabilities[
-        "reviewer"
-    ].success_summary = "Completed researcher -> coder -> reviewer sequence successfully."
     capabilities["reviewer"].non_retryable_summary = lambda _: (
         "Reviewer rejected candidate output with non-retryable failure."
     )
@@ -223,10 +220,6 @@ async def test_runner_persists_failed_run_and_terminal_failure_trace(
             fallback_retryable=True,
         ),
     }
-    capabilities["reviewer"].terminal_on_success = True
-    capabilities[
-        "reviewer"
-    ].success_summary = "Completed researcher -> coder -> reviewer sequence successfully."
     capabilities["reviewer"].non_retryable_summary = lambda _: (
         "Reviewer rejected candidate output with non-retryable failure."
     )

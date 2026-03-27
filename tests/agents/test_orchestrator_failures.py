@@ -53,8 +53,9 @@ class StubCapability:
         self.execute = execute
         self.request_factory = request_factory
         self.fallback_retryable = fallback_retryable
-        self.terminal_on_success = False
-        self.success_summary: str | None = None
+        self.success_summary = lambda sequence: (
+            f"Completed {' -> '.join(sequence)} sequence successfully."
+        )
         self.failure_terminal_status = failure_terminal_status or (
             lambda context: TaskStatus.FAILED
         )
