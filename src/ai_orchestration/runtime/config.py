@@ -1,7 +1,9 @@
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -26,6 +28,8 @@ class Settings(BaseModel):
             values = dict(data)
         else:
             return data
+
+        load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
 
         if "OPENAI_API_KEY" not in values and "openai_api_key" not in values:
             env_api_key = os.getenv("OPENAI_API_KEY")
