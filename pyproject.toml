@@ -44,5 +44,8 @@ files = ["src", "tests"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not live'"
 asyncio_mode = "auto"
+markers = [
+  "live: smoke tests that call a real provider and require OPENAI_API_KEY",
+]
