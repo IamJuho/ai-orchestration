@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install project and dev dependencies
+        run: uv sync --extra dev
+
+      - name: Check formatting
+        run: uv run --extra dev ruff format --check .
+
+      - name: Lint code
+        run: uv run --extra dev ruff check .
+
+      - name: Type check
+        run: uv run --extra dev mypy src tests
+
+      - name: Run offline tests
+        run: uv run --extra dev pytest -m "not live"
