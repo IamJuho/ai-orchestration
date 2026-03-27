@@ -6,83 +6,33 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_orchestration.agents.base import WorkerCapability
-from ai_orchestration.agents.registry import CapabilityName, get_worker_capability
-from ai_orchestration.contracts.coder import CoderArtifact, CoderRequest, CoderResponse
+from ai_orchestration.agents.base import OrchestrationContext, WorkerCapability
+from ai_orchestration.agents.registry import (
+    CapabilityName,
+    get_worker_capability,
+    list_worker_capabilities,
+)
 from ai_orchestration.contracts.common import Artifact, Failure, FailureKind, TaskStatus
 from ai_orchestration.contracts.orchestrator import FinalResponse, OrchestratorRequest
-from ai_orchestration.contracts.researcher import (
-    ResearcherArtifact,
-    ResearcherRequest,
-    ResearcherResponse,
-)
-from ai_orchestration.contracts.reviewer import ReviewerRequest, ReviewerResponse
 from ai_orchestration.deps import RuntimeDeps
 
 CapabilityResolver = Callable[[str], WorkerCapability[Any, Any]]
 RetryNotifier = Callable[[str, int, Failure], Awaitable[None]]
-WorkerRequest = ResearcherRequest | CoderRequest | ReviewerRequest
-WorkerResponse = ResearcherResponse | CoderResponse | ReviewerResponse
 
 
 @dataclass(frozen=True)
 class WorkerStep:
     worker_name: CapabilityName
-    build_request: Callable[[OrchestratorRequest, OrchestratorState], WorkerRequest]
 
 
 @dataclass
 class OrchestratorState:
     steps_used: int = 0
-    artifacts: list[Artifact] = field(default_factory=list)
-    failures: list[Failure] = field(default_factory=list)
-    researcher_artifacts: list[ResearcherArtifact] = field(default_factory=list)
-    coder_artifacts: list[CoderArtifact] = field(default_factory=list)
+    context: OrchestrationContext = field(default_factory=OrchestrationContext)
 
 
-def _build_researcher_request(
-    request: OrchestratorRequest, state: OrchestratorState
-) -> ResearcherRequest:
-    del state
-    envelope = request.envelope
-    return ResearcherRequest(
-        run_id=envelope.run_id,
-        task_id=envelope.task_id,
-        objective=envelope.objective,
-        constraints=envelope.constraints,
-    )
-
-
-def _build_coder_request(request: OrchestratorRequest, state: OrchestratorState) -> CoderRequest:
-    envelope = request.envelope
-    return CoderRequest(
-        run_id=envelope.run_id,
-        task_id=envelope.task_id,
-        objective=envelope.objective,
-        research_artifacts=state.researcher_artifacts,
-        constraints=envelope.constraints,
-    )
-
-
-def _build_reviewer_request(
-    request: OrchestratorRequest, state: OrchestratorState
-) -> ReviewerRequest:
-    envelope = request.envelope
-    return ReviewerRequest(
-        run_id=envelope.run_id,
-        task_id=envelope.task_id,
-        objective=envelope.objective,
-        candidate_artifacts=state.coder_artifacts,
-        constraints=envelope.constraints,
-    )
-
-
-def _v1_worker_steps() -> tuple[WorkerStep, WorkerStep, WorkerStep]:
-    return (
-        WorkerStep(worker_name="researcher", build_request=_build_researcher_request),
-        WorkerStep(worker_name="coder", build_request=_build_coder_request),
-        WorkerStep(worker_name="reviewer", build_request=_build_reviewer_request),
-    )
+def _v1_worker_steps() -> tuple[WorkerStep, ...]:
+    return tuple(WorkerStep(worker_name=name) for name in list_worker_capabilities())
 
 
 def _to_common_artifacts(
@@ -113,119 +63,99 @@ def _max_steps_failure(worker_name: str, max_steps: int) -> Failure:
 
 
 def _failed_response(
-    run_id: str, summary: str, artifacts: list[Artifact], failures: list[Failure]
+    *,
+    run_id: str,
+    status: TaskStatus,
+    summary: str,
+    context: OrchestrationContext,
+    extra_failures: Sequence[Failure] = (),
 ) -> FinalResponse:
     return FinalResponse(
         run_id=run_id,
-        status=TaskStatus.FAILED,
+        status=status,
         summary=summary,
-        artifacts=artifacts,
-        failures=failures,
+        artifacts=context.artifacts,
+        failures=[*context.failures, *extra_failures],
     )
 
 
-def _review_terminal_status(candidate_artifacts: list[CoderArtifact]) -> TaskStatus:
-    return TaskStatus.PARTIAL if candidate_artifacts else TaskStatus.FAILED
-
-
 def _max_steps_response(
-    step: WorkerStep,
     *,
+    step: WorkerStep,
+    capability: WorkerCapability[Any, Any],
     request: OrchestratorRequest,
     state: OrchestratorState,
     max_steps: int,
 ) -> FinalResponse:
     limit_failure = _max_steps_failure(step.worker_name, max_steps)
-    if step.worker_name == "reviewer":
-        return FinalResponse(
-            run_id=request.envelope.run_id,
-            status=_review_terminal_status(state.coder_artifacts),
-            summary="Orchestrator exceeded max_steps before reviewer completed.",
-            artifacts=state.artifacts,
-            failures=[*state.failures, limit_failure],
-        )
-
+    terminal_status = capability.failure_terminal_status(state.context)
     return _failed_response(
         run_id=request.envelope.run_id,
+        status=terminal_status,
         summary=f"Orchestrator exceeded max_steps before {step.worker_name} completed.",
-        artifacts=state.artifacts,
-        failures=[*state.failures, limit_failure],
+        context=state.context,
+        extra_failures=(limit_failure,),
     )
 
 
 def _non_retryable_response(
-    step: WorkerStep,
     *,
+    step: WorkerStep,
+    capability: WorkerCapability[Any, Any],
     request: OrchestratorRequest,
     state: OrchestratorState,
 ) -> FinalResponse:
+    terminal_status = capability.failure_terminal_status(state.context)
+    summary = f"{step.worker_name.capitalize()} failed with non-retryable error."
     if step.worker_name == "reviewer":
-        return FinalResponse(
-            run_id=request.envelope.run_id,
-            status=_review_terminal_status(state.coder_artifacts),
-            summary="Reviewer rejected candidate output with non-retryable failure.",
-            artifacts=state.artifacts,
-            failures=state.failures,
-        )
-
+        summary = "Reviewer rejected candidate output with non-retryable failure."
     return _failed_response(
         run_id=request.envelope.run_id,
-        summary=f"{step.worker_name.capitalize()} failed with non-retryable error.",
-        artifacts=state.artifacts,
-        failures=state.failures,
+        status=terminal_status,
+        summary=summary,
+        context=state.context,
     )
 
 
 def _retry_exhausted_response(
-    step: WorkerStep,
     *,
+    step: WorkerStep,
+    capability: WorkerCapability[Any, Any],
     request: OrchestratorRequest,
     state: OrchestratorState,
 ) -> FinalResponse:
+    terminal_status = capability.failure_terminal_status(state.context)
+    summary = f"{step.worker_name.capitalize()} retry budget exhausted."
     if step.worker_name == "reviewer":
-        return FinalResponse(
-            run_id=request.envelope.run_id,
-            status=_review_terminal_status(state.coder_artifacts),
-            summary="Reviewer rejected candidate output after retry budget exhausted.",
-            artifacts=state.artifacts,
-            failures=state.failures,
-        )
-
+        summary = "Reviewer rejected candidate output after retry budget exhausted."
     return _failed_response(
         run_id=request.envelope.run_id,
-        summary=f"{step.worker_name.capitalize()} retry budget exhausted.",
-        artifacts=state.artifacts,
-        failures=state.failures,
+        status=terminal_status,
+        summary=summary,
+        context=state.context,
     )
 
 
 def _handle_step_success(
-    step: WorkerStep,
     *,
+    step: WorkerStep,
     request: OrchestratorRequest,
     state: OrchestratorState,
-    response: WorkerResponse,
+    response: BaseModel,
 ) -> FinalResponse | None:
-    if step.worker_name == "researcher":
-        assert isinstance(response, ResearcherResponse)
-        state.researcher_artifacts = list(response.artifacts)
-        state.artifacts.extend(_to_common_artifacts(response.artifacts))
+    artifacts = _to_common_artifacts(getattr(response, "artifacts", []))
+    state.context.artifacts.extend(artifacts)
+    state.context.artifacts_by_worker[step.worker_name] = artifacts
+
+    if step.worker_name != "reviewer":
         return None
 
-    if step.worker_name == "coder":
-        assert isinstance(response, CoderResponse)
-        state.coder_artifacts = list(response.artifacts)
-        state.artifacts.extend(_to_common_artifacts(response.artifacts))
-        return None
-
-    assert isinstance(response, ReviewerResponse)
-    state.artifacts.extend(_to_common_artifacts(response.artifacts))
     return FinalResponse(
         run_id=request.envelope.run_id,
         status=TaskStatus.SUCCESS,
         summary="Completed researcher -> coder -> reviewer sequence successfully.",
-        artifacts=state.artifacts,
-        failures=state.failures,
+        artifacts=state.context.artifacts,
+        failures=state.context.failures,
     )
 
 
@@ -241,37 +171,53 @@ async def _execute_worker_step(
     on_retry: RetryNotifier | None,
 ) -> FinalResponse | None:
     capability = resolve_capability(step.worker_name)
-    worker_request = step.build_request(request, state)
 
     for attempt in range(retry_budget + 1):
         if state.steps_used >= max_steps:
-            return _max_steps_response(step, request=request, state=state, max_steps=max_steps)
+            return _max_steps_response(
+                step=step,
+                capability=capability,
+                request=request,
+                state=state,
+                max_steps=max_steps,
+            )
 
         state.steps_used += 1
+        worker_request = capability.request_factory(request, state.context)
         response = await capability.execute(deps, worker_request)
 
         if response.status is TaskStatus.SUCCESS:
-            return _handle_step_success(step, request=request, state=state, response=response)
+            return _handle_step_success(step=step, request=request, state=state, response=response)
 
         failure = response.failure or _fallback_failure(
             worker_name=step.worker_name,
             status=response.status,
-            retryable=step.worker_name == "reviewer",
+            retryable=capability.fallback_retryable,
         )
-        state.failures.append(failure)
+        state.context.failures.append(failure)
 
         if not failure.retryable:
-            return _non_retryable_response(step, request=request, state=state)
+            return _non_retryable_response(
+                step=step,
+                capability=capability,
+                request=request,
+                state=state,
+            )
         if attempt == retry_budget:
-            return _retry_exhausted_response(step, request=request, state=state)
+            return _retry_exhausted_response(
+                step=step,
+                capability=capability,
+                request=request,
+                state=state,
+            )
         if on_retry is not None:
             await on_retry(step.worker_name, attempt + 1, failure)
 
     return _failed_response(
         run_id=request.envelope.run_id,
+        status=TaskStatus.FAILED,
         summary="Unexpected worker step termination.",
-        artifacts=state.artifacts,
-        failures=state.failures,
+        context=state.context,
     )
 
 
@@ -283,7 +229,9 @@ async def execute_orchestrator(
     on_retry: RetryNotifier | None = None,
 ) -> FinalResponse:
     resolve_capability = capability_resolver or get_worker_capability
-    state = OrchestratorState(artifacts=list(request.envelope.input_artifacts))
+    state = OrchestratorState(
+        context=OrchestrationContext(artifacts=list(request.envelope.input_artifacts))
+    )
 
     for step in _v1_worker_steps():
         step_result = await _execute_worker_step(
@@ -301,7 +249,7 @@ async def execute_orchestrator(
 
     return _failed_response(
         run_id=request.envelope.run_id,
+        status=TaskStatus.FAILED,
         summary="Unexpected orchestrator termination.",
-        artifacts=state.artifacts,
-        failures=state.failures,
+        context=state.context,
     )
