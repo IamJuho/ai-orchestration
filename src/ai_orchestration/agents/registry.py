@@ -8,6 +8,8 @@ from ai_orchestration.agents.researcher import build_researcher_request, execute
 from ai_orchestration.agents.reviewer import (
     build_reviewer_request,
     execute_reviewer,
+    reviewer_non_retryable_summary,
+    reviewer_retry_exhausted_summary,
     reviewer_terminal_status,
 )
 from ai_orchestration.contracts.coder import CoderRequest, CoderResponse
@@ -38,7 +40,11 @@ _WORKER_CAPABILITIES: dict[CapabilityName, WorkerCapability[Any, Any]] = {
         execute=execute_reviewer,
         request_factory=build_reviewer_request,
         fallback_retryable=True,
+        terminal_on_success=True,
+        success_summary="Completed researcher -> coder -> reviewer sequence successfully.",
         failure_terminal_status=reviewer_terminal_status,
+        non_retryable_summary=reviewer_non_retryable_summary,
+        retry_exhausted_summary=reviewer_retry_exhausted_summary,
     ),
 }
 

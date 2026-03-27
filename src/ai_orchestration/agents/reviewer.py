@@ -35,6 +35,14 @@ def reviewer_terminal_status(context: OrchestrationContext) -> TaskStatus:
     return TaskStatus.PARTIAL if context.artifacts_by_worker.get("coder") else TaskStatus.FAILED
 
 
+def reviewer_non_retryable_summary(_: str) -> str:
+    return "Reviewer rejected candidate output with non-retryable failure."
+
+
+def reviewer_retry_exhausted_summary(_: str) -> str:
+    return "Reviewer rejected candidate output after retry budget exhausted."
+
+
 async def execute_reviewer(deps: RuntimeDeps, request: ReviewerRequest) -> ReviewerResponse:
     try:
         result = await reviewer_agent.run(
