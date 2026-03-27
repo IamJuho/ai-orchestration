@@ -56,3 +56,19 @@ async def test_trace_snapshot_does_not_change_after_future_appends() -> None:
         "run.started",
         "worker.dispatched",
     )
+
+
+@pytest.mark.asyncio
+async def test_trace_snapshot_payload_mutation_does_not_persist() -> None:
+    store = InMemoryStateStore()
+    await store.create_run("run-trace-deep-copy")
+
+    snapshot = await store.append_trace_event(
+        "run-trace-deep-copy",
+        TraceEvent(event_type="worker.started", payload={"worker": "researcher"}),
+    )
+    snapshot.trace_events[0].payload["worker"] = "mutated"
+
+    latest = await store.get_run("run-trace-deep-copy")
+    assert latest is not None
+    assert latest.trace_events[0].payload["worker"] == "researcher"

@@ -54,3 +54,35 @@ async def test_in_memory_store_get_returns_isolated_snapshot() -> None:
     latest = await store.get_run("run-2")
     assert latest is not None
     assert latest.task_statuses["coder"] is TaskStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_create_run_existing_returns_deep_isolated_snapshot() -> None:
+    store = InMemoryStateStore()
+    initial = await store.create_run("run-3", metadata={"objective": "initial"})
+    initial.metadata["objective"] = "mutated"
+
+    existing = await store.create_run("run-3")
+    assert existing.metadata == {"objective": "initial"}
+
+
+@pytest.mark.asyncio
+async def test_add_artifact_snapshot_metadata_mutation_does_not_persist() -> None:
+    store = InMemoryStateStore()
+    await store.create_run("run-4")
+
+    snapshot = await store.add_artifact(
+        "run-4",
+        Artifact(
+            artifact_id="a-2",
+            kind="research_notes",
+            producer="researcher",
+            content="notes",
+            metadata={"source": "v1"},
+        ),
+    )
+    snapshot.artifacts[0].metadata["source"] = "mutated"
+
+    latest = await store.get_run("run-4")
+    assert latest is not None
+    assert latest.artifacts[0].metadata["source"] == "v1"
