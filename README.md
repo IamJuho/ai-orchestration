@@ -2,7 +2,7 @@
 
 Requires Python 3.11.
 
-Writing / PR guidance lives in `CONTRIBUTING.md`.
+작성 규칙과 PR guidance는 `CONTRIBUTING.md`를 참고하세요.
 
 ## Install
 

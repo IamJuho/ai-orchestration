@@ -76,7 +76,7 @@ README, PR body, release note, migration note 같은 repo-facing 문서는:
 
 ## AI Attribution Policy
 
-아래와 같은 **AI attribution marker**는 commit message, PR body, README, docs, comment, template 어디에도 넣지 않습니다:
+아래와 같은 **AI attribution marker**는 commit message, PR title/body, README, docs, template 같은 repo-facing writing에 넣지 않습니다:
 
 - generated marker
 - AI writing marker
@@ -92,5 +92,11 @@ README, PR body, release note, migration note 같은 repo-facing 문서는:
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `.github/workflows/policy.yml`
 - project notepad decisions
+
+현재 workflow enforcement 범위는 다음과 같습니다:
+- tracked markdown / PR template의 금지 문구 검사
+- pushed commit message 전체 텍스트의 금지 문구 검사
+- pushed commit subject의 Korean-first 검사
+- PR title/body의 금지 문구 + required section 검사
 
 즉, guidance + template + CI policy를 함께 사용합니다.
