@@ -10,7 +10,7 @@
 ### Korean-first, English-supported
 - 기본 문체는 **자연스러운 한국어**를 사용합니다.
 - 다만 technical term은 English를 섞어 쓰는 것이 더 명확하면 그대로 사용합니다.
-- **영어-only writing은 피합니다.**
+- **영어-only writing은 피하고, 한국어를 반드시 포함합니다.**
 
 좋은 예:
 - `runner timeout semantics를 terminal state 기준으로 정리한다`
@@ -96,7 +96,7 @@ README, PR body, release note, migration note 같은 repo-facing 문서는:
 현재 workflow enforcement 범위는 다음과 같습니다:
 - tracked markdown / PR template의 금지 문구 검사
 - pushed commit message 전체 텍스트의 금지 문구 검사
-- pushed commit subject의 Korean-first 검사
+- pushed commit subject의 한국어 포함 여부 검사
 - PR title/body의 금지 문구 + required section 검사
 
 즉, guidance + template + CI policy를 함께 사용합니다.
