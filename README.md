@@ -2,6 +2,8 @@
 
 Requires Python 3.11.
 
+Writing / PR guidance lives in `CONTRIBUTING.md`.
+
 ## Install
 
 ```bash
